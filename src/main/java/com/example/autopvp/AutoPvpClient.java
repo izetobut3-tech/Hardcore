@@ -3,21 +3,20 @@ package com.example.autopvp;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.keybinding.v1.KeyBindingHelper;
+import net.fabricmc.fabric.api.client.rendering.v1.WorldRenderEvents;
 import net.minecraft.client.MinecraftClient;
+import net.minecraft.client.input.Input;
+import net.minecraft.client.network.ClientPlayerEntity;
 import net.minecraft.client.option.KeyBinding;
 import net.minecraft.client.util.InputUtil;
-import net.minecraft.component.DataComponentTypes;
-import net.minecraft.component.type.PotionContentsComponent;
 import net.minecraft.entity.player.PlayerEntity;
 import net.minecraft.item.ItemStack;
 import net.minecraft.item.Items;
-import net.minecraft.potion.Potion;
-import net.minecraft.potion.Potions;
 import net.minecraft.registry.Registries;
-import net.minecraft.registry.entry.RegistryEntry;
 import net.minecraft.registry.tag.ItemTags;
 import net.minecraft.util.Hand;
 import net.minecraft.util.Identifier;
+import net.minecraft.util.PlayerInput;
 import net.minecraft.util.math.Box;
 import net.minecraft.util.math.MathHelper;
 import org.lwjgl.glfw.GLFW;
@@ -28,13 +27,10 @@ import java.util.List;
 public class AutoPvpClient implements ClientModInitializer {
 
     private static final double SALDIRI_MESAFESI = 3.5;
-    private static final double NISAN_MESAFESI = 12.0;
     private static final double TARAMA_MESAFESI = 35.0;
-    private static final float KACIS_CAN_ESIGI = 8.0f;
     private static final float TAM_CAN = 20.0f;
-    private static final float DONUS_HIZI = 22.0f;
-    private static final int BUFF_ARALIGI = 1800;
-    public static boolean AKTIF = true;
+    private static final float RENDER_DONUS_YUMUSAKLIGI = 0.15f;
+    public static boolean AKTIF = false;
 
     private static final List<String> KILIC_SIRASI = Arrays.asList(
             "minecraft:netherite_sword",
@@ -45,16 +41,20 @@ public class AutoPvpClient implements ClientModInitializer {
             "minecraft:wooden_sword"
     );
 
-    private boolean acilDurumMu = false;
     private int vurusBeklemesi = 0;
     private int zipEskimeSayaci = 0;
-    private int saglikBeklemesi = 0;
-    private int buffSayaci = 0;
+    private int potBeklemesi = 0;
 
     private static final KeyBinding.Category AUTOPVP_KATEGORI =
             KeyBinding.Category.create(Identifier.of("autopvp", "main"));
 
     private static KeyBinding ACKAPA_TUSU;
+
+    private Input gercekGirdi = null;
+    private boolean zorlaGirdiAktif = false;
+
+    private static class BotGirdisi extends Input {
+    }
 
     @Override
     public void onInitializeClient() {
@@ -68,8 +68,8 @@ public class AutoPvpClient implements ClientModInitializer {
         ClientTickEvents.END_CLIENT_TICK.register(client -> {
             while (ACKAPA_TUSU.wasPressed()) {
                 AKTIF = !AKTIF;
-                if (AKTIF) {
-                    buffSayaci = BUFF_ARALIGI;
+                if (!AKTIF) {
+                    girdiyiGeriVer(client);
                 }
                 if (client.player != null) {
                     client.player.sendMessage(
@@ -81,44 +81,43 @@ public class AutoPvpClient implements ClientModInitializer {
         });
 
         ClientTickEvents.END_CLIENT_TICK.register(this::herTick);
+
+        WorldRenderEvents.START.register(context -> {
+            if (!AKTIF) return;
+            MinecraftClient client = MinecraftClient.getInstance();
+            if (client.player == null || client.world == null) return;
+
+            PlayerEntity dusman = enYakinDusman(client, client.player);
+            if (dusman != null) {
+                hedefeBak(client.player, dusman, RENDER_DONUS_YUMUSAKLIGI);
+            }
+        });
     }
 
     private void herTick(MinecraftClient client) {
         if (!AKTIF) return;
         if (client.player == null || client.world == null || client.interactionManager == null) return;
 
-        PlayerEntity ben = client.player;
-        if (saglikBeklemesi > 0) saglikBeklemesi--;
+        ClientPlayerEntity ben = client.player;
+        if (potBeklemesi > 0) potBeklemesi--;
 
-        buffSayaci++;
-        if (buffSayaci >= BUFF_ARALIGI) {
-            guclendirmeAt(client, ben);
-            buffSayaci = 0;
-        }
+        potIcIhtiyacVarsa(client, ben);
 
-        if (ben.getHealth() <= KACIS_CAN_ESIGI) {
-            acilDurumMu = true;
-        } else if (ben.getHealth() >= TAM_CAN) {
-            acilDurumMu = false;
-        }
-
-        if (acilDurumMu) {
-            sifaIksiriAt(client, ben);
+        PlayerEntity dusman = enYakinDusman(client, ben);
+        if (dusman == null) {
+            duz(ben);
             return;
         }
 
-        PlayerEntity dusman = enYakinDusman(client, ben);
-        if (dusman == null) return;
+        enIyiKiliciKusan(ben);
 
         double mesafe = ben.distanceTo(dusman);
 
-        if (mesafe <= NISAN_MESAFESI) {
-            enIyiKiliciKusan(ben);
-            hedefeBak(ben, dusman, DONUS_HIZI);
-        }
-
         if (mesafe <= SALDIRI_MESAFESI) {
+            duz(ben);
             saldir(client, ben, dusman);
+        } else {
+            hedefeYuru(ben);
         }
     }
 
@@ -141,7 +140,7 @@ public class AutoPvpClient implements ClientModInitializer {
         return enYakin;
     }
 
-    private void hedefeBak(PlayerEntity ben, PlayerEntity hedef, float donusHizi) {
+    private void hedefeBak(PlayerEntity ben, PlayerEntity hedef, float donusOrani) {
         double dx = hedef.getX() - ben.getX();
         double dy = hedef.getEyeY() - ben.getEyeY();
         double dz = hedef.getZ() - ben.getZ();
@@ -156,14 +155,42 @@ public class AutoPvpClient implements ClientModInitializer {
         float farkYaw = MathHelper.wrapDegrees(hedefYaw - suankiYaw);
         float farkPitch = hedefPitch - suankiPitch;
 
-        float yeniYaw = suankiYaw + MathHelper.clamp(farkYaw, -donusHizi, donusHizi);
-        float yeniPitch = suankiPitch + MathHelper.clamp(farkPitch, -donusHizi, donusHizi);
+        float yeniYaw = suankiYaw + farkYaw * donusOrani;
+        float yeniPitch = suankiPitch + farkPitch * donusOrani;
         yeniPitch = MathHelper.clamp(yeniPitch, -90.0f, 90.0f);
 
         ben.setYaw(yeniYaw);
         ben.setPitch(yeniPitch);
         ben.setBodyYaw(yeniYaw);
         ben.setHeadYaw(yeniYaw);
+    }
+
+    private void hedefeYuru(ClientPlayerEntity ben) {
+        zorlaGirdiUygula(ben, true, false);
+        if (ben.horizontalCollision && ben.isOnGround()) {
+            ben.jump();
+        }
+    }
+
+    private void duz(PlayerEntity ben) {
+        girdiyiGeriVer(MinecraftClient.getInstance());
+    }
+
+    private void zorlaGirdiUygula(ClientPlayerEntity ben, boolean ileri, boolean geri) {
+        if (!zorlaGirdiAktif) {
+            gercekGirdi = ben.input;
+            ben.input = new BotGirdisi();
+            zorlaGirdiAktif = true;
+        }
+        ben.input.playerInput = new PlayerInput(ileri, geri, false, false, false, false, false);
+    }
+
+    private void girdiyiGeriVer(MinecraftClient client) {
+        if (zorlaGirdiAktif && client != null && client.player != null && gercekGirdi != null) {
+            client.player.input = gercekGirdi;
+        }
+        zorlaGirdiAktif = false;
+        gercekGirdi = null;
     }
 
     private void saldir(MinecraftClient client, PlayerEntity ben, PlayerEntity dusman) {
@@ -183,22 +210,22 @@ public class AutoPvpClient implements ClientModInitializer {
         vurusBeklemesi = 4;
     }
 
-    private int potionSlotuBul(PlayerEntity ben, RegistryEntry<Potion> aranan) {
+    private void potIcIhtiyacVarsa(MinecraftClient client, ClientPlayerEntity ben) {
+        if (ben.getHealth() >= TAM_CAN) return;
+        if (potBeklemesi > 0) return;
+
+        int potSlot = -1;
         for (int slot = 0; slot < 9; slot++) {
             ItemStack stack = ben.getInventory().getStack(slot);
-            if (stack.getItem() != Items.SPLASH_POTION) continue;
-            PotionContentsComponent pcc = stack.get(DataComponentTypes.POTION_CONTENTS);
-            if (pcc == null) continue;
-            if (pcc.potion().isPresent() && pcc.potion().get().equals(aranan)) {
-                return slot;
+            if (stack.getItem() == Items.SPLASH_POTION) {
+                potSlot = slot;
+                break;
             }
         }
-        return -1;
-    }
+        if (potSlot == -1) return;
 
-    private void ayaginaAt(MinecraftClient client, PlayerEntity ben, int slot) {
         int oncekiSlot = ben.getInventory().getSelectedSlot();
-        ben.getInventory().setSelectedSlot(slot);
+        ben.getInventory().setSelectedSlot(potSlot);
 
         float eskiPitch = ben.getPitch();
         ben.setPitch(-90.0f);
@@ -207,29 +234,7 @@ public class AutoPvpClient implements ClientModInitializer {
 
         ben.setPitch(eskiPitch);
         ben.getInventory().setSelectedSlot(oncekiSlot);
-    }
-
-    private void sifaIksiriAt(MinecraftClient client, PlayerEntity ben) {
-        if (saglikBeklemesi > 0) return;
-
-        int slot = potionSlotuBul(ben, Potions.STRONG_HEALING);
-        if (slot == -1) slot = potionSlotuBul(ben, Potions.HEALING);
-        if (slot == -1) return;
-
-        ayaginaAt(client, ben, slot);
-        saglikBeklemesi = 30;
-    }
-
-    private void guclendirmeAt(MinecraftClient client, PlayerEntity ben) {
-        int hizSlot = potionSlotuBul(ben, Potions.STRONG_SWIFTNESS);
-        if (hizSlot != -1) {
-            ayaginaAt(client, ben, hizSlot);
-        }
-
-        int kuvvetSlot = potionSlotuBul(ben, Potions.STRONG_STRENGTH);
-        if (kuvvetSlot != -1) {
-            ayaginaAt(client, ben, kuvvetSlot);
-        }
+        potBeklemesi = 30;
     }
 
     private void enIyiKiliciKusan(PlayerEntity ben) {

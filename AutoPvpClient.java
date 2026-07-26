@@ -54,30 +54,6 @@ public class AutoPvpClient implements ClientModInitializer {
     private boolean zorlaGirdiAktif = false;
 
     private static class BotGirdisi extends Input {
-        @Override
-        public void tick(boolean slowDown, float slowDownFactor) {
-            PlayerInput girdi = this.playerInput;
-            if (girdi == null) {
-                girdi = PlayerInput.DEFAULT;
-            }
-
-            float ileriDeger = 0f;
-            float yanDeger = 0f;
-            if (girdi.forward()) ileriDeger += 1f;
-            if (girdi.backward()) ileriDeger -= 1f;
-            if (girdi.left()) yanDeger += 1f;
-            if (girdi.right()) yanDeger -= 1f;
-
-            this.movementForward = ileriDeger;
-            this.movementSideways = yanDeger;
-            this.jumping = girdi.jump();
-            this.sneaking = girdi.sneak();
-
-            if (slowDown) {
-                this.movementForward *= slowDownFactor;
-                this.movementSideways *= slowDownFactor;
-            }
-        }
     }
 
     @Override
