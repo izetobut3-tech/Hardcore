@@ -10,6 +10,7 @@ import net.minecraft.client.option.KeyBinding;
 import net.minecraft.client.util.InputUtil;
 import net.minecraft.component.DataComponentTypes;
 import net.minecraft.component.type.PotionContentsComponent;
+import net.minecraft.entity.effect.StatusEffects;
 import net.minecraft.entity.player.PlayerEntity;
 import net.minecraft.item.ItemStack;
 import net.minecraft.item.Items;
@@ -32,12 +33,13 @@ import java.util.Optional;
 public class AutoPvpClient implements ClientModInitializer {
 
     private static final double SALDIRI_MESAFESI = 3.5;
-    private static final double NISAN_MESAFESI = 6.0;
+    private static final double NISAN_MESAFESI = 4.5;
     private static final double TARAMA_MESAFESI = 35.0;
     private static final float TAM_CAN = 20.0f;
     private static final float SAGLIK_ESIGI = 8.0f;
     private static final float DONUS_YUMUSAKLIGI = 8.0f;
-    private static final int BUFF_ARALIGI = 20 * 90;
+    private static final float MAKS_AIM_ACISI = 95.0f; // bu acidan fazla farkli bakiyorsan (ornegin arkani donuyorsan) mudahale etme
+    private static final int BUFF_TEKRAR_BEKLEME = 10; // efekt paketinin gelmesini bekle, spam onlemi
     public static boolean AKTIF = false;
 
     private static final List<String> KILIC_SIRASI = Arrays.asList(
@@ -168,6 +170,13 @@ public class AutoPvpClient implements ClientModInitializer {
         float suankiPitch = ben.getPitch();
 
         float farkYaw = MathHelper.wrapDegrees(hedefYaw - suankiYaw);
+
+        // Oyuncu bilerek genis bir aciyla baska yone (mesela arkasina) bakiyorsa,
+        // aim-assist devreye girmesin - kamerayi tamamen serbest birak.
+        if (Math.abs(farkYaw) > MAKS_AIM_ACISI) {
+            return;
+        }
+
         float farkPitch = hedefPitch - suankiPitch;
 
         float yumusaklikOrani = (float) Math.min(1.0, gecenSaniye * DONUS_YUMUSAKLIGI);
@@ -201,9 +210,16 @@ public class AutoPvpClient implements ClientModInitializer {
         if (buffBeklemesi > 0) {
             buffBeklemesi--;
         } else {
-            iksirVarsaAt(client, ben, HIZ_IKSIRLERI);
-            iksirVarsaAt(client, ben, KUVVET_IKSIRLERI);
-            buffBeklemesi = BUFF_ARALIGI;
+            boolean birSeyAtildi = false;
+            if (!ben.hasStatusEffect(StatusEffects.SPEED)) {
+                birSeyAtildi |= iksirVarsaAt(client, ben, HIZ_IKSIRLERI);
+            }
+            if (!ben.hasStatusEffect(StatusEffects.STRENGTH)) {
+                birSeyAtildi |= iksirVarsaAt(client, ben, KUVVET_IKSIRLERI);
+            }
+            if (birSeyAtildi) {
+                buffBeklemesi = BUFF_TEKRAR_BEKLEME;
+            }
         }
     }
 
