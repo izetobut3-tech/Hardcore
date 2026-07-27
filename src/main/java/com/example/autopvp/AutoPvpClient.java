@@ -39,6 +39,7 @@ public class AutoPvpClient implements ClientModInitializer {
     private static final float SAGLIK_ESIGI = 8.0f;
     private static final float DONUS_YUMUSAKLIGI = 8.0f;
     private static final float MAKS_AIM_ACISI = 95.0f; // bu acidan fazla farkli bakiyorsan (ornegin arkani donuyorsan) mudahale etme
+    private static final float VURUS_ACISI_TOLERANSI = 15.0f; // kilic sadece bu koni icindeyse vurulur, gercek hitbox gibi
     private static final int BUFF_TEKRAR_BEKLEME = 10; // efekt paketinin gelmesini bekle, spam onlemi
     public static boolean AKTIF = false;
 
@@ -133,7 +134,7 @@ public class AutoPvpClient implements ClientModInitializer {
 
         enIyiKiliciKusan(ben);
 
-        if (mesafe <= SALDIRI_MESAFESI) {
+        if (mesafe <= SALDIRI_MESAFESI && bakisAcisindaMi(ben, dusman)) {
             saldir(client, ben, dusman);
         }
     }
@@ -171,8 +172,6 @@ public class AutoPvpClient implements ClientModInitializer {
 
         float farkYaw = MathHelper.wrapDegrees(hedefYaw - suankiYaw);
 
-        // Oyuncu bilerek genis bir aciyla baska yone (mesela arkasina) bakiyorsa,
-        // aim-assist devreye girmesin - kamerayi tamamen serbest birak.
         if (Math.abs(farkYaw) > MAKS_AIM_ACISI) {
             return;
         }
@@ -189,6 +188,14 @@ public class AutoPvpClient implements ClientModInitializer {
         ben.setPitch(yeniPitch);
         ben.setBodyYaw(yeniYaw);
         ben.setHeadYaw(yeniYaw);
+    }
+
+    private boolean bakisAcisindaMi(PlayerEntity ben, PlayerEntity dusman) {
+        double dx = dusman.getX() - ben.getX();
+        double dz = dusman.getZ() - ben.getZ();
+        float hedefYaw = (float) (Math.toDegrees(Math.atan2(dz, dx)) - 90.0);
+        float fark = MathHelper.wrapDegrees(hedefYaw - ben.getYaw());
+        return Math.abs(fark) <= VURUS_ACISI_TOLERANSI;
     }
 
     private void saldir(MinecraftClient client, PlayerEntity ben, PlayerEntity dusman) {
