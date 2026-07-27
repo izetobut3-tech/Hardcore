@@ -35,6 +35,7 @@ public class AutoPvpClient implements ClientModInitializer {
     private static final double NISAN_MESAFESI = 6.0;
     private static final double TARAMA_MESAFESI = 35.0;
     private static final float TAM_CAN = 20.0f;
+    private static final float SAGLIK_ESIGI = 8.0f;
     private static final float DONUS_YUMUSAKLIGI = 8.0f;
     private static final int BUFF_ARALIGI = 20 * 90;
     public static boolean AKTIF = false;
@@ -52,11 +53,13 @@ public class AutoPvpClient implements ClientModInitializer {
             Potions.HEALING,
             Potions.STRONG_HEALING
     );
-    private static final List<RegistryEntry<Potion>> BUFF_IKSIRLERI = Arrays.asList(
-            Potions.STRENGTH,
+    private static final List<RegistryEntry<Potion>> HIZ_IKSIRLERI = Arrays.asList(
+            Potions.STRONG_SWIFTNESS,
+            Potions.SWIFTNESS
+    );
+    private static final List<RegistryEntry<Potion>> KUVVET_IKSIRLERI = Arrays.asList(
             Potions.STRONG_STRENGTH,
-            Potions.SWIFTNESS,
-            Potions.STRONG_SWIFTNESS
+            Potions.STRENGTH
     );
     private static final int IKSIR_TASIMA_SLOTU = 8;
 
@@ -186,7 +189,7 @@ public class AutoPvpClient implements ClientModInitializer {
     }
 
     private void potIcIhtiyacVarsa(MinecraftClient client, ClientPlayerEntity ben) {
-        if (ben.getHealth() < TAM_CAN) {
+        if (ben.getHealth() < SAGLIK_ESIGI) {
             if (!saglikIksiriAtildiMi) {
                 iksirVarsaAt(client, ben, SAGLIK_IKSIRLERI);
                 saglikIksiriAtildiMi = true;
@@ -197,7 +200,9 @@ public class AutoPvpClient implements ClientModInitializer {
 
         if (buffBeklemesi > 0) {
             buffBeklemesi--;
-        } else if (iksirVarsaAt(client, ben, BUFF_IKSIRLERI)) {
+        } else {
+            iksirVarsaAt(client, ben, HIZ_IKSIRLERI);
+            iksirVarsaAt(client, ben, KUVVET_IKSIRLERI);
             buffBeklemesi = BUFF_ARALIGI;
         }
     }
