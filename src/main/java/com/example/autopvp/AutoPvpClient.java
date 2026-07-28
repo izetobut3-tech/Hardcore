@@ -33,7 +33,7 @@ import java.util.Random;
 
 public class AutoPvpClient implements ClientModInitializer {
 
-    private static final double SALDIRI_MESAFESI = 3.5;
+    private static final double SALDIRI_MESAFESI = 3.0;
     private static final double NISAN_MESAFESI = 4.5;
     private static final double TARAMA_MESAFESI = 35.0;
     private static final float TAM_CAN = 20.0f;
