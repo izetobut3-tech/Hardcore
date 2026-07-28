@@ -29,6 +29,7 @@ import org.lwjgl.glfw.GLFW;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Optional;
+import java.util.Random;
 
 public class AutoPvpClient implements ClientModInitializer {
 
@@ -37,10 +38,31 @@ public class AutoPvpClient implements ClientModInitializer {
     private static final double TARAMA_MESAFESI = 35.0;
     private static final float TAM_CAN = 20.0f;
     private static final float SAGLIK_ESIGI = 8.0f;
-    private static final float DONUS_YUMUSAKLIGI = 8.0f;
+    private static final float DONUS_YUMUSAKLIGI = 14.0f;
     private static final float MAKS_AIM_ACISI = 95.0f; // bu acidan fazla farkli bakiyorsan (ornegin arkani donuyorsan) mudahale etme
     private static final float VURUS_ACISI_TOLERANSI = 15.0f; // kilic sadece bu koni icindeyse vurulur, gercek hitbox gibi
     private static final int BUFF_TEKRAR_BEKLEME = 10; // efekt paketinin gelmesini bekle, spam onlemi
+
+    // ---- Insan-eli hissi: hiz her seferinde biraz farkli olsun, dumduz/hep ayni egriyle donmesin ----
+    private static final float HIZ_RASTGELELIGI = 0.35f; // yumusaklik oranina +-%35 rastgele carpan
+
+    // ---- Milimetrik el titremesi: kafa hicbir zaman tam sabit/lazer-duz durmasin ----
+    private static final float TITREME_MAKS = 4.0f; // derece - VURUS_ACISI_TOLERANSI'nin (15) belirgin altinda kalmali
+    private static final float TITREME_ADIMI = 3.0f; // her frame titreme ne kadar degisebilir (random-walk)
+    private static final float TITREME_DONME_HIZI = 0.15f; // titreme yavas yavas merkeze de cekilsin, sonsuza kadar sapmasin
+
+    // ---- Gercek fare hassasiyeti ile birebir uyum ----
+    // Vanilla Minecraft, ham fare piksel hareketini derece'ye cevirirken TAM OLARAK
+    // su formulu kullanir (Mouse.java / PlayerEntity.changeLookDirection):
+    //   d = sensitivity * 0.6 + 0.2
+    //   e = d^3 * 8.0
+    //   derece = ham_piksel_hareketi * e * 0.15
+    // Yani senin ayarladigin fare hassasiyetinde, gercek bir farenin uretebilecegi
+    // EN KUCUK acisal adim budur. Bot'un donuslerini de bu adima yuvarlayarak,
+    // gercek fareyle asla uretilemeyecek kadar "pikselaltı/pürüzsüz" degerler
+    // uretmesini engelliyoruz - donuş gercek fare girdisiyle ayirt edilemez hale gelir.
+    private static final float FARE_PIKSEL_CARPANI = 0.15f;
+
     public static boolean AKTIF = false;
 
     private static final List<String> KILIC_SIRASI = Arrays.asList(
@@ -69,6 +91,9 @@ public class AutoPvpClient implements ClientModInitializer {
     private int buffBeklemesi = 0;
     private boolean saglikIksiriAtildiMi = false;
     private long sonKareZamani = 0L;
+    private float titremeYaw = 0f;
+    private float titremePitch = 0f;
+    private final Random rastgele = new Random();
 
     private static final KeyBinding.Category AUTOPVP_KATEGORI =
             KeyBinding.Category.create(Identifier.of("autopvp", "main"));
@@ -113,7 +138,7 @@ public class AutoPvpClient implements ClientModInitializer {
             double gecenSaniye = (sonKareZamani == 0L) ? 0.05 : (simdi - sonKareZamani) / 1_000_000_000.0;
             sonKareZamani = simdi;
 
-            heKareDon(client.player, dusman, gecenSaniye);
+            heKareDon(client, client.player, dusman, gecenSaniye);
         });
     }
 
@@ -158,7 +183,21 @@ public class AutoPvpClient implements ClientModInitializer {
         return enYakin;
     }
 
-    private void heKareDon(PlayerEntity ben, PlayerEntity hedef, double gecenSaniye) {
+    /** Vanilla'nin gercek fare-hassasiyeti formulu: 1 ham piksel hareketinin kac derece ettigini dondurur. */
+    private float dereceBasiPiksel(MinecraftClient client) {
+        double sens = client.options.getMouseSensitivity().getValue();
+        double d = sens * 0.6000000238418579 + 0.20000000298023224;
+        double e = d * d * d * 8.0;
+        return (float) (e * FARE_PIKSEL_CARPANI);
+    }
+
+    /** Verilen acisal degisimi, gercek farenin (senin hassasiyetinde) uretebilecegi en kucuk adima yuvarlar. */
+    private float pikselAdimaYuvarla(float aciDegisimi, float dereceBasiPiksel) {
+        if (dereceBasiPiksel <= 0f) return aciDegisimi;
+        return Math.round(aciDegisimi / dereceBasiPiksel) * dereceBasiPiksel;
+    }
+
+    private void heKareDon(MinecraftClient client, PlayerEntity ben, PlayerEntity hedef, double gecenSaniye) {
         double dx = hedef.getX() - ben.getX();
         double dy = hedef.getEyeY() - ben.getEyeY();
         double dz = hedef.getZ() - ben.getZ();
@@ -172,17 +211,44 @@ public class AutoPvpClient implements ClientModInitializer {
 
         float farkYaw = MathHelper.wrapDegrees(hedefYaw - suankiYaw);
 
+        // Oyuncu bilerek genis bir aciyla baska yone (mesela arkasina) bakiyorsa,
+        // aim-assist devreye girmesin - kamerayi tamamen serbest birak.
         if (Math.abs(farkYaw) > MAKS_AIM_ACISI) {
             return;
         }
 
         float farkPitch = hedefPitch - suankiPitch;
 
-        float yumusaklikOrani = (float) Math.min(1.0, gecenSaniye * DONUS_YUMUSAKLIGI);
+        // Hiz her frame biraz farkli olsun - boylece donus hep ayni "duz" egriyle
+        // gitmiyor, insan gibi anlik hizlanip yavaslama oluyor.
+        float rastgeleHizCarpani = 1.0f + (rastgele.nextFloat() - 0.5f) * 2f * HIZ_RASTGELELIGI;
+        float yumusaklikOrani = (float) Math.min(1.0, gecenSaniye * DONUS_YUMUSAKLIGI * rastgeleHizCarpani);
 
-        float yeniYaw = suankiYaw + farkYaw * yumusaklikOrani;
-        float yeniPitch = suankiPitch + farkPitch * yumusaklikOrani;
-        yeniPitch = MathHelper.clamp(yeniPitch, -90.0f, 90.0f);
+        float yawDegisimi = farkYaw * yumusaklikOrani;
+        float pitchDegisimi = farkPitch * yumusaklikOrani;
+
+        // Milimetrik el titremesi: kucuk bir random-walk, merkeze dogru hafifce
+        // cekiliyor ki sonsuza kadar sapmasin, ama asla tam duz/sabit durmasin.
+        titremeYaw += (rastgele.nextFloat() - 0.5f) * TITREME_ADIMI;
+        titremeYaw -= titremeYaw * TITREME_DONME_HIZI;
+        titremeYaw = MathHelper.clamp(titremeYaw, -TITREME_MAKS, TITREME_MAKS);
+
+        titremePitch += (rastgele.nextFloat() - 0.5f) * TITREME_ADIMI;
+        titremePitch -= titremePitch * TITREME_DONME_HIZI;
+        titremePitch = MathHelper.clamp(titremePitch, -TITREME_MAKS, TITREME_MAKS);
+
+        yawDegisimi += titremeYaw;
+        pitchDegisimi += titremePitch;
+
+        // Gercek fare hassasiyetinle uretilebilecek en kucuk acisal adima yuvarla -
+        // boylece hicbir donus, gercek bir farenin o hassasiyette asla ureteme-
+        // yecegi kadar "ince/pikselalti" olmuyor.
+        float dbp = dereceBasiPiksel(client);
+        yawDegisimi = pikselAdimaYuvarla(yawDegisimi, dbp);
+        pitchDegisimi = pikselAdimaYuvarla(pitchDegisimi, dbp);
+
+        float yeniYaw = suankiYaw + yawDegisimi;
+        float yeniPitch = MathHelper.clamp(suankiPitch + pitchDegisimi, -90.0f, 90.0f);
 
         ben.setYaw(yeniYaw);
         ben.setPitch(yeniPitch);
@@ -190,6 +256,7 @@ public class AutoPvpClient implements ClientModInitializer {
         ben.setHeadYaw(yeniYaw);
     }
 
+    /** Dusman, kilicin gercekten ulasabilecegi bir acida (bakis konisinde) mi? Arkani donmusken vurmayi engeller. */
     private boolean bakisAcisindaMi(PlayerEntity ben, PlayerEntity dusman) {
         double dx = dusman.getX() - ben.getX();
         double dz = dusman.getZ() - ben.getZ();
